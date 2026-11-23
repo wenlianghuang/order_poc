@@ -9,6 +9,7 @@ public sealed class AppDbContext : DbContext
     {
     }
 
+    public DbSet<User> Users => Set<User>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 

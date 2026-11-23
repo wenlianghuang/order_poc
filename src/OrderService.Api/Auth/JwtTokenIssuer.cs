@@ -11,7 +11,7 @@ public sealed class JwtTokenIssuer
 
     public JwtTokenIssuer(AuthOptions auth) => _auth = auth;
 
-    public IssuedToken Create(string username)
+    public IssuedToken Create(Guid userId)
     {
         var expiresAtUtc = DateTime.UtcNow.AddMinutes(_auth.TokenLifetimeMinutes);
         var descriptor = new SecurityTokenDescriptor
@@ -21,7 +21,7 @@ public sealed class JwtTokenIssuer
             Expires = expiresAtUtc,
             Subject = new ClaimsIdentity(
             [
-                new Claim(JwtRegisteredClaimNames.Sub, username)
+                new Claim(JwtRegisteredClaimNames.Sub, userId.ToString())
             ]),
             SigningCredentials = new SigningCredentials(
                 new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_auth.SigningKey)),

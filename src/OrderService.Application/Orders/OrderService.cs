@@ -14,30 +14,61 @@ public sealed class OrderService
         _outbox = outbox;
     }
 
-    public async Task<CreateOrderResult> CreateAsync(CreateOrderCommand command, CancellationToken cancellationToken)
+    public async Task<CreateOrderResult> CreateAsync(Guid ownerId, CreateOrderCommand command, CancellationToken cancellationToken)
     {
         var errors = CreateOrderCommandValidator.Validate(command);
         if (errors.Count > 0)
             return new CreateOrderResult.InvalidInput(errors);
 
-        var order = Order.Create(command.CustomerName!, command.Amount!.Value);
+        var order = Order.Create(ownerId, command.CustomerName!, command.Amount!.Value);
         _outbox.Add(OutboxMessageTypes.OrderCreated, order.Id.ToString());
         await _orders.AddAsync(order, cancellationToken);
         return new CreateOrderResult.Success(order.Id);
     }
 
-    public async Task<OrderDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<OrderDto>> ListAsync(Guid ownerId, CancellationToken cancellationToken)
     {
-        var order = await _orders.GetByIdAsync(id, cancellationToken);
+        var orders = await _orders.ListByOwnerAsync(ownerId, cancellationToken);
+        return orders.Select(ToDto).ToArray();
+    }
+
+    public async Task<OrderDto?> GetByIdAsync(Guid ownerId, Guid id, CancellationToken cancellationToken)
+    {
+        var order = await _orders.GetByIdAsync(ownerId, id, cancellationToken);
         if (order is null)
             return null;
 
         return ToDto(order);
     }
 
-    public async Task<OrderDto?> PayAsync(Guid id, CancellationToken cancellationToken)
+    public async Task<UpdateOrderResult> UpdateAsync(Guid ownerId, Guid id, CreateOrderCommand command, CancellationToken cancellationToken)
     {
-        var order = await _orders.GetByIdAsync(id, cancellationToken);
+        var errors = CreateOrderCommandValidator.Validate(command);
+        if (errors.Count > 0)
+            return new UpdateOrderResult.InvalidInput(errors);
+
+        var order = await _orders.GetByIdAsync(ownerId, id, cancellationToken);
+        if (order is null)
+            return new UpdateOrderResult.NotFound();
+
+        order.ChangeDetails(command.CustomerName!, command.Amount!.Value);
+        await _orders.UpdateAsync(order, cancellationToken);
+        return new UpdateOrderResult.Success(ToDto(order));
+    }
+
+    public async Task<bool> DeleteAsync(Guid ownerId, Guid id, CancellationToken cancellationToken)
+    {
+        var order = await _orders.GetByIdAsync(ownerId, id, cancellationToken);
+        if (order is null)
+            return false;
+
+        await _orders.DeleteAsync(order, cancellationToken);
+        return true;
+    }
+
+    public async Task<OrderDto?> PayAsync(Guid ownerId, Guid id, CancellationToken cancellationToken)
+    {
+        var order = await _orders.GetByIdAsync(ownerId, id, cancellationToken);
         if (order is null)
             return null;
 
@@ -46,9 +77,9 @@ public sealed class OrderService
         return ToDto(order);
     }
 
-    public async Task<OrderDto?> CancelAsync(Guid id, CancellationToken cancellationToken)
+    public async Task<OrderDto?> CancelAsync(Guid ownerId, Guid id, CancellationToken cancellationToken)
     {
-        var order = await _orders.GetByIdAsync(id, cancellationToken);
+        var order = await _orders.GetByIdAsync(ownerId, id, cancellationToken);
         if (order is null)
             return null;
 

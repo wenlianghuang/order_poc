@@ -23,9 +23,6 @@ public static class JwtAuthentication
         if (Encoding.UTF8.GetByteCount(auth.SigningKey) < 32)
             throw new InvalidOperationException("Auth:SigningKey must be at least 32 bytes.");
 
-        if (string.IsNullOrWhiteSpace(auth.Username) || string.IsNullOrWhiteSpace(auth.Password))
-            throw new InvalidOperationException("Auth:Username and Auth:Password are required.");
-
         if (auth.TokenLifetimeMinutes <= 0)
             throw new InvalidOperationException("Auth:TokenLifetimeMinutes must be greater than zero.");
 
@@ -35,6 +32,7 @@ public static class JwtAuthentication
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
             {
+                options.MapInboundClaims = false;
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer = true,

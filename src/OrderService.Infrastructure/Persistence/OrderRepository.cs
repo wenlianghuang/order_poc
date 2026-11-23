@@ -16,12 +16,24 @@ public sealed class OrderRepository : IOrderRepository
         await _db.SaveChangesAsync(cancellationToken);
     }
 
-    public Task<Order?> GetByIdAsync(Guid id, CancellationToken cancellationToken)
-        => _db.Orders.FirstOrDefaultAsync(order => order.Id == id, cancellationToken);
+    public async Task<IReadOnlyList<Order>> ListByOwnerAsync(Guid ownerId, CancellationToken cancellationToken)
+        => await _db.Orders
+            .Where(order => order.OwnerId == ownerId)
+            .OrderByDescending(order => order.CreatedAtUtc)
+            .ToListAsync(cancellationToken);
+
+    public Task<Order?> GetByIdAsync(Guid ownerId, Guid id, CancellationToken cancellationToken)
+        => _db.Orders.FirstOrDefaultAsync(order => order.Id == id && order.OwnerId == ownerId, cancellationToken);
 
     public async Task UpdateAsync(Order order, CancellationToken cancellationToken)
     {
         _db.Orders.Update(order);
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task DeleteAsync(Order order, CancellationToken cancellationToken)
+    {
+        _db.Orders.Remove(order);
         await _db.SaveChangesAsync(cancellationToken);
     }
 }

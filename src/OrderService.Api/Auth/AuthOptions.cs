@@ -10,9 +10,5 @@ public sealed class AuthOptions
 
     public string SigningKey { get; set; } = "";
 
-    public string Username { get; set; } = "";
-
-    public string Password { get; set; } = "";
-
     public int TokenLifetimeMinutes { get; set; } = 60;
 }

@@ -15,6 +15,15 @@ public sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
         builder.Property(order => order.Id)
             .HasColumnName("id");
 
+        builder.Property(order => order.OwnerId)
+            .HasColumnName("owner_id")
+            .IsRequired();
+
+        builder.HasOne<User>()
+            .WithMany()
+            .HasForeignKey(order => order.OwnerId)
+            .OnDelete(DeleteBehavior.Cascade);
+
         builder.Property(order => order.CustomerName)
             .HasColumnName("customer_name")
             .HasMaxLength(Order.CustomerNameMaxLength)

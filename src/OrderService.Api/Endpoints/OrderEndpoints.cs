@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using OrderService.Api.Auth;
 using OrderService.Application.Orders;
 using OrderAppService = OrderService.Application.Orders.OrderService;
 
@@ -7,36 +9,81 @@ public static class OrderEndpoints
 {
     public static IEndpointRouteBuilder MapOrderEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/orders");
+        var group = app.MapGroup("/orders").RequireAuthorization();
 
-        group.MapPost("/", async (CreateOrderCommand command, OrderAppService orders, CancellationToken cancellationToken) =>
+        group.MapGet("/", async (ClaimsPrincipal user, OrderAppService orders, CancellationToken cancellationToken) =>
         {
-            var result = await orders.CreateAsync(command, cancellationToken);
+            if (!CurrentUserId.TryGet(user, out var ownerId))
+                return Results.Unauthorized();
+
+            var list = await orders.ListAsync(ownerId, cancellationToken);
+            return Results.Ok(list);
+        });
+
+        group.MapPost("/", async (CreateOrderCommand command, ClaimsPrincipal user, OrderAppService orders, CancellationToken cancellationToken) =>
+        {
+            if (!CurrentUserId.TryGet(user, out var ownerId))
+                return Results.Unauthorized();
+
+            var result = await orders.CreateAsync(ownerId, command, cancellationToken);
             return result switch
             {
                 CreateOrderResult.Success success => Results.Created($"/orders/{success.Id}", new { id = success.Id }),
                 CreateOrderResult.InvalidInput invalid => Results.ValidationProblem(invalid.Errors),
                 _ => throw new InvalidOperationException("Unexpected create order result.")
             };
-        }).RequireAuthorization();
+        });
 
-        group.MapGet("/{id:guid}", async (Guid id, OrderAppService orders, CancellationToken cancellationToken) =>
+        group.MapGet("/{id:guid}", async (Guid id, ClaimsPrincipal user, OrderAppService orders, CancellationToken cancellationToken) =>
         {
-            var order = await orders.GetByIdAsync(id, cancellationToken);
+            if (!CurrentUserId.TryGet(user, out var ownerId))
+                return Results.Unauthorized();
+
+            var order = await orders.GetByIdAsync(ownerId, id, cancellationToken);
             return order is null ? Results.NotFound() : Results.Ok(order);
         });
 
-        group.MapPost("/{id:guid}/pay", async (Guid id, OrderAppService orders, CancellationToken cancellationToken) =>
+        group.MapPut("/{id:guid}", async (Guid id, CreateOrderCommand command, ClaimsPrincipal user, OrderAppService orders, CancellationToken cancellationToken) =>
         {
-            var order = await orders.PayAsync(id, cancellationToken);
-            return order is null ? Results.NotFound() : Results.Ok(order);
-        }).RequireAuthorization();
+            if (!CurrentUserId.TryGet(user, out var ownerId))
+                return Results.Unauthorized();
 
-        group.MapPost("/{id:guid}/cancel", async (Guid id, OrderAppService orders, CancellationToken cancellationToken) =>
+            var result = await orders.UpdateAsync(ownerId, id, command, cancellationToken);
+            return result switch
+            {
+                UpdateOrderResult.Success success => Results.Ok(success.Order),
+                UpdateOrderResult.InvalidInput invalid => Results.ValidationProblem(invalid.Errors),
+                UpdateOrderResult.NotFound => Results.NotFound(),
+                _ => throw new InvalidOperationException("Unexpected update order result.")
+            };
+        });
+
+        group.MapDelete("/{id:guid}", async (Guid id, ClaimsPrincipal user, OrderAppService orders, CancellationToken cancellationToken) =>
         {
-            var order = await orders.CancelAsync(id, cancellationToken);
+            if (!CurrentUserId.TryGet(user, out var ownerId))
+                return Results.Unauthorized();
+
+            var deleted = await orders.DeleteAsync(ownerId, id, cancellationToken);
+            return deleted ? Results.NoContent() : Results.NotFound();
+        });
+
+        group.MapPost("/{id:guid}/pay", async (Guid id, ClaimsPrincipal user, OrderAppService orders, CancellationToken cancellationToken) =>
+        {
+            if (!CurrentUserId.TryGet(user, out var ownerId))
+                return Results.Unauthorized();
+
+            var order = await orders.PayAsync(ownerId, id, cancellationToken);
             return order is null ? Results.NotFound() : Results.Ok(order);
-        }).RequireAuthorization();
+        });
+
+        group.MapPost("/{id:guid}/cancel", async (Guid id, ClaimsPrincipal user, OrderAppService orders, CancellationToken cancellationToken) =>
+        {
+            if (!CurrentUserId.TryGet(user, out var ownerId))
+                return Results.Unauthorized();
+
+            var order = await orders.CancelAsync(ownerId, id, cancellationToken);
+            return order is null ? Results.NotFound() : Results.Ok(order);
+        });
 
         return app;
     }
