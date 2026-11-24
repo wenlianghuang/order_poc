@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using OrderService.Application.Common.Interfaces;
+using OrderService.Infrastructure.Outbox;
 using OrderService.Infrastructure.Persistence;
 using OrderService.Infrastructure.Security;
 
@@ -19,6 +20,7 @@ public static class DependencyInjection
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
         services.AddScoped<IOutbox, OutboxWriter>();
+        services.AddOutboxProcessing();
 
         return services;
     }

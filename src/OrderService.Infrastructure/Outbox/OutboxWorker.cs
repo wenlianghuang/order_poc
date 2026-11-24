@@ -26,8 +26,8 @@ public sealed class OutboxWorker : BackgroundService
         {
             try
             {
-                var processed = await ProcessPendingAsync(stoppingToken);
-                if (processed == 0)
+                var batch = await ProcessPendingAsync(stoppingToken);
+                if (batch.Processed == 0 || batch.Deferred > 0)
                     await Task.Delay(IdleDelay, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -49,10 +49,11 @@ public sealed class OutboxWorker : BackgroundService
         }
     }
 
-    private async Task<int> ProcessPendingAsync(CancellationToken stoppingToken)
+    private async Task<OutboxBatch> ProcessPendingAsync(CancellationToken stoppingToken)
     {
         await using var scope = _scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var dispatcher = scope.ServiceProvider.GetRequiredService<OutboxDispatcher>();
         var pending = await db.OutboxMessages
             .Where(message => message.ProcessedAtUtc == null)
             .OrderBy(message => message.CreatedAtUtc)
@@ -60,23 +61,25 @@ public sealed class OutboxWorker : BackgroundService
             .ToListAsync(stoppingToken);
 
         if (pending.Count == 0)
-            return 0;
+            return new OutboxBatch(0, 0);
+
+        var notifications = pending
+            .Select(message => new OutboxNotification(message.Id, message.Type, message.Payload))
+            .ToArray();
+        var processedIds = (await dispatcher.DispatchAsync(notifications, stoppingToken)).ToHashSet();
+        if (processedIds.Count == 0)
+            return new OutboxBatch(0, pending.Count);
 
         var processedAtUtc = DateTime.UtcNow;
         foreach (var message in pending)
-            message.ProcessedAtUtc = processedAtUtc;
-
-        await db.SaveChangesAsync(stoppingToken);
-
-        foreach (var message in pending)
         {
-            _logger.LogInformation(
-                "Processed outbox message {MessageId} {MessageType} {Payload}",
-                message.Id,
-                message.Type,
-                message.Payload);
+            if (processedIds.Contains(message.Id))
+                message.ProcessedAtUtc = processedAtUtc;
         }
 
-        return pending.Count;
+        await db.SaveChangesAsync(stoppingToken);
+        return new OutboxBatch(processedIds.Count, pending.Count - processedIds.Count);
     }
+
+    private readonly record struct OutboxBatch(int Processed, int Deferred);
 }

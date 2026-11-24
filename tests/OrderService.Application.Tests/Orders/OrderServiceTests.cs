@@ -145,12 +145,34 @@ public sealed class OrderServiceTests
         var order = await SeedDraft(_ownerId, "Ada");
 
         var hidden = await _service.PayAsync(_otherOwnerId, order.Id, CancellationToken.None);
-        var paid = await _service.PayAsync(_ownerId, order.Id, CancellationToken.None);
 
         Assert.Null(hidden);
+        Assert.Empty(_outbox.Messages);
+
+        var paid = await _service.PayAsync(_ownerId, order.Id, CancellationToken.None);
+
         Assert.NotNull(paid);
         Assert.Equal("Paid", paid.Status);
         Assert.Equal(OrderStatus.Paid, order.Status);
+        var message = Assert.Single(_outbox.Messages);
+        Assert.Equal(OutboxMessageTypes.OrderPaid, message.Type);
+        Assert.Equal(order.Id.ToString(), message.Payload);
+    }
+
+    [Fact]
+    public async Task PayAsync_does_not_stage_an_outbox_message_when_payment_is_rejected()
+    {
+        var order = await SeedDraft(_ownerId, "Ada");
+        await _service.PayAsync(_ownerId, order.Id, CancellationToken.None);
+
+        var exception = await Assert.ThrowsAsync<DomainException>(() =>
+            _service.PayAsync(_ownerId, order.Id, CancellationToken.None));
+
+        Assert.Equal("Order is already paid.", exception.Message);
+        Assert.Equal(OrderStatus.Paid, order.Status);
+        var message = Assert.Single(_outbox.Messages);
+        Assert.Equal(OutboxMessageTypes.OrderPaid, message.Type);
+        Assert.Equal(order.Id.ToString(), message.Payload);
     }
 
     [Fact]
@@ -159,12 +181,34 @@ public sealed class OrderServiceTests
         var order = await SeedDraft(_ownerId, "Ada");
 
         var hidden = await _service.CancelAsync(_otherOwnerId, order.Id, CancellationToken.None);
-        var cancelled = await _service.CancelAsync(_ownerId, order.Id, CancellationToken.None);
 
         Assert.Null(hidden);
+        Assert.Empty(_outbox.Messages);
+
+        var cancelled = await _service.CancelAsync(_ownerId, order.Id, CancellationToken.None);
+
         Assert.NotNull(cancelled);
         Assert.Equal("Cancelled", cancelled.Status);
         Assert.Equal(OrderStatus.Cancelled, order.Status);
+        var message = Assert.Single(_outbox.Messages);
+        Assert.Equal(OutboxMessageTypes.OrderCancelled, message.Type);
+        Assert.Equal(order.Id.ToString(), message.Payload);
+    }
+
+    [Fact]
+    public async Task CancelAsync_does_not_stage_an_outbox_message_when_cancellation_is_rejected()
+    {
+        var order = await SeedDraft(_ownerId, "Ada");
+        await _service.PayAsync(_ownerId, order.Id, CancellationToken.None);
+
+        var exception = await Assert.ThrowsAsync<DomainException>(() =>
+            _service.CancelAsync(_ownerId, order.Id, CancellationToken.None));
+
+        Assert.Equal("Only a draft order can be cancelled.", exception.Message);
+        Assert.Equal(OrderStatus.Paid, order.Status);
+        var message = Assert.Single(_outbox.Messages);
+        Assert.Equal(OutboxMessageTypes.OrderPaid, message.Type);
+        Assert.Equal(order.Id.ToString(), message.Payload);
     }
 
     private async Task<Order> SeedDraft(Guid ownerId, string customerName)

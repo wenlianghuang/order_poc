@@ -73,6 +73,7 @@ public sealed class OrderService
             return null;
 
         order.Pay();
+        _outbox.Add(OutboxMessageTypes.OrderPaid, order.Id.ToString());
         await _orders.UpdateAsync(order, cancellationToken);
         return ToDto(order);
     }
@@ -84,6 +85,7 @@ public sealed class OrderService
             return null;
 
         order.Cancel();
+        _outbox.Add(OutboxMessageTypes.OrderCancelled, order.Id.ToString());
         await _orders.UpdateAsync(order, cancellationToken);
         return ToDto(order);
     }
