@@ -20,7 +20,7 @@ public static class DependencyInjection
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
         services.AddScoped<IOutbox, OutboxWriter>();
-        services.AddOutboxProcessing();
+        services.AddOutboxProcessing(configuration);
 
         return services;
     }

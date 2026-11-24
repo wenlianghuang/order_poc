@@ -4,10 +4,12 @@
     <Project Path="src/OrderService.Application/OrderService.Application.csproj" />
     <Project Path="src/OrderService.Domain/OrderService.Domain.csproj" />
     <Project Path="src/OrderService.Infrastructure/OrderService.Infrastructure.csproj" />
+    <Project Path="src/ShipmentService.Api/ShipmentService.Api.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/OrderService.Application.Tests/OrderService.Application.Tests.csproj" />
     <Project Path="tests/OrderService.Domain.Tests/OrderService.Domain.Tests.csproj" />
     <Project Path="tests/OrderService.Infrastructure.Tests/OrderService.Infrastructure.Tests.csproj" />
+    <Project Path="tests/ShipmentService.Tests/ShipmentService.Tests.csproj" />
   </Folder>
 </Solution>
