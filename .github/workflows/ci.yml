@@ -22,3 +22,6 @@ jobs:
 
       - name: Build
         run: dotnet build OrderService.slnx --no-restore --configuration Release --verbosity minimal
+
+      - name: Test
+        run: dotnet test OrderService.slnx --no-build --configuration Release --verbosity minimal
