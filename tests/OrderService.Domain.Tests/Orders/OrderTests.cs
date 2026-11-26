@@ -19,6 +19,7 @@ public sealed class OrderTests
         Assert.Equal("Ada", order.CustomerName);
         Assert.Equal(120, order.Amount);
         Assert.Equal(OrderStatus.Draft, order.Status);
+        Assert.Null(order.Fulfillment);
         Assert.InRange(order.CreatedAtUtc, before, DateTime.UtcNow);
     }
 
@@ -181,6 +182,46 @@ public sealed class OrderTests
             "Ada",
             120,
             OrderStatus.Paid);
+    }
+
+    [Fact]
+    public void RecordFulfillment_moves_a_paid_order_forward()
+    {
+        var order = Draft();
+        order.Pay();
+
+        Assert.True(order.RecordFulfillment(FulfillmentStatus.Pending));
+        Assert.True(order.RecordFulfillment(FulfillmentStatus.Packed));
+        Assert.True(order.RecordFulfillment(FulfillmentStatus.Shipped));
+
+        Assert.Equal(OrderStatus.Paid, order.Status);
+        Assert.Equal(FulfillmentStatus.Shipped, order.Fulfillment);
+    }
+
+    [Fact]
+    public void RecordFulfillment_leaves_a_later_status_in_place()
+    {
+        var order = Draft();
+        order.Pay();
+        order.RecordFulfillment(FulfillmentStatus.Shipped);
+
+        Assert.False(order.RecordFulfillment(FulfillmentStatus.Shipped));
+        Assert.False(order.RecordFulfillment(FulfillmentStatus.Pending));
+
+        Assert.Equal(FulfillmentStatus.Shipped, order.Fulfillment);
+        Assert.Equal(OrderStatus.Paid, order.Status);
+    }
+
+    [Fact]
+    public void RecordFulfillment_rejects_a_draft_and_leaves_it_empty()
+    {
+        var order = Draft();
+
+        var exception = Assert.Throws<DomainException>(() => order.RecordFulfillment(FulfillmentStatus.Pending));
+
+        Assert.Equal("Only a paid order can record fulfillment.", exception.Message);
+        Assert.Null(order.Fulfillment);
+        Assert.Equal(OrderStatus.Draft, order.Status);
     }
 
     private static Order Draft() => Order.Create(OwnerId, "Ada", 120);

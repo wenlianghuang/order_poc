@@ -5,12 +5,14 @@ namespace ShipmentService.Tests.Shipments;
 
 public sealed class ShipmentServiceTests
 {
-    private readonly FakeShipmentRepository _shipments = new();
+    private readonly FakeShipmentOutbox _outbox = new();
+    private readonly FakeShipmentRepository _shipments;
     private readonly ShipmentAppService _service;
 
     public ShipmentServiceTests()
     {
-        _service = new ShipmentAppService(_shipments);
+        _shipments = new FakeShipmentRepository(_outbox);
+        _service = new ShipmentAppService(_shipments, _outbox);
     }
 
     [Fact]
@@ -25,6 +27,9 @@ public sealed class ShipmentServiceTests
         Assert.Equal(orderId, created.Shipment.OrderId);
         Assert.Equal(nameof(ShipmentStatus.Pending), created.Shipment.Status);
         Assert.Equal(orderId, Assert.Single(_shipments.Items).OrderId);
+        var notice = Assert.Single(_outbox.Messages);
+        Assert.Equal(FulfillmentNoticeTypes.Pending, notice.Type);
+        Assert.Equal(orderId.ToString(), notice.Payload);
     }
 
     [Theory]
@@ -38,6 +43,7 @@ public sealed class ShipmentServiceTests
 
         Assert.IsType<AcceptDeliveryResult.Acknowledged>(result);
         Assert.Empty(_shipments.Items);
+        Assert.Empty(_outbox.Messages);
     }
 
     [Fact]
@@ -54,6 +60,7 @@ public sealed class ShipmentServiceTests
         var existing = Assert.IsType<AcceptDeliveryResult.ShipmentAlreadyExists>(second);
         Assert.Equal(created.Shipment.Id, existing.Shipment.Id);
         Assert.Single(_shipments.Items);
+        Assert.Single(_outbox.Messages);
     }
 
     [Fact]
@@ -67,6 +74,7 @@ public sealed class ShipmentServiceTests
         var existing = Assert.IsType<AcceptDeliveryResult.ShipmentAlreadyExists>(second);
         Assert.Equal(created.Shipment.Id, existing.Shipment.Id);
         Assert.Single(_shipments.Items);
+        Assert.Single(_outbox.Messages);
     }
 
     [Fact]
@@ -82,6 +90,7 @@ public sealed class ShipmentServiceTests
         var existing = Assert.IsType<AcceptDeliveryResult.ShipmentAlreadyExists>(result);
         Assert.Equal(orderId, existing.Shipment.OrderId);
         Assert.Single(_shipments.Items);
+        Assert.Single(_outbox.Messages);
     }
 
     [Theory]
@@ -122,6 +131,9 @@ public sealed class ShipmentServiceTests
         var success = Assert.IsType<UpdateShipmentResult.Success>(result);
         Assert.Equal(nameof(ShipmentStatus.Packed), success.Shipment.Status);
         Assert.Equal(ShipmentStatus.Packed, _shipments.Items.Single().Status);
+        Assert.Equal(
+            [FulfillmentNoticeTypes.Pending, FulfillmentNoticeTypes.Packed],
+            _outbox.Messages.Select(message => message.Type));
     }
 
     [Fact]
@@ -135,6 +147,9 @@ public sealed class ShipmentServiceTests
 
         Assert.Equal("Shipment is already packed.", exception.Message);
         Assert.Equal(ShipmentStatus.Packed, _shipments.Items.Single().Status);
+        Assert.Equal(
+            [FulfillmentNoticeTypes.Pending, FulfillmentNoticeTypes.Packed],
+            _outbox.Messages.Select(message => message.Type));
     }
 
     [Fact]
@@ -147,6 +162,7 @@ public sealed class ShipmentServiceTests
 
         Assert.Equal("Only a packed shipment can be shipped.", exception.Message);
         Assert.Equal(ShipmentStatus.Pending, _shipments.Items.Single().Status);
+        Assert.Equal(FulfillmentNoticeTypes.Pending, Assert.Single(_outbox.Messages).Type);
     }
 
     [Fact]
@@ -160,6 +176,8 @@ public sealed class ShipmentServiceTests
         var success = Assert.IsType<UpdateShipmentResult.Success>(result);
         Assert.Equal(nameof(ShipmentStatus.Shipped), success.Shipment.Status);
         Assert.Equal(ShipmentStatus.Shipped, _shipments.Items.Single().Status);
+        Assert.Equal(FulfillmentNoticeTypes.Shipped, _outbox.Messages[^1].Type);
+        Assert.Equal(shipment.OrderId.ToString(), _outbox.Messages[^1].Payload);
     }
 
     [Fact]
@@ -207,9 +225,29 @@ public sealed class ShipmentServiceTests
     private static AcceptDeliveryCommand Paid(Guid messageId, Guid orderId)
         => new(messageId, orderId, DeliveryTypes.OrderPaid);
 
+    private sealed class FakeShipmentOutbox : IShipmentOutbox
+    {
+        private readonly List<(string Type, string Payload)> _pending = [];
+
+        public List<(string Type, string Payload)> Messages { get; } = [];
+
+        public void Add(string type, string payload) => _pending.Add((type, payload));
+
+        public void Commit()
+        {
+            Messages.AddRange(_pending);
+            _pending.Clear();
+        }
+
+        public void Discard() => _pending.Clear();
+    }
+
     private sealed class FakeShipmentRepository : IShipmentRepository
     {
+        private readonly FakeShipmentOutbox _outbox;
         private readonly List<Shipment> _items = [];
+
+        public FakeShipmentRepository(FakeShipmentOutbox outbox) => _outbox = outbox;
 
         public IReadOnlyList<Shipment> Items => _items;
 
@@ -227,14 +265,21 @@ public sealed class ShipmentServiceTests
         public Task AddAsync(Shipment shipment, CancellationToken cancellationToken)
         {
             if (_items.Any(item => item.MessageId == shipment.MessageId || item.OrderId == shipment.OrderId))
+            {
+                _outbox.Discard();
                 throw new DuplicateShipmentException();
+            }
 
             _items.Add(shipment);
+            _outbox.Commit();
             return Task.CompletedTask;
         }
 
         public Task UpdateAsync(Shipment shipment, CancellationToken cancellationToken)
-            => Task.CompletedTask;
+        {
+            _outbox.Commit();
+            return Task.CompletedTask;
+        }
 
         public Task<IReadOnlyList<Shipment>> ListAsync(CancellationToken cancellationToken)
         {

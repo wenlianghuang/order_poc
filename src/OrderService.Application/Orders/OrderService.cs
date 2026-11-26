@@ -90,6 +90,31 @@ public sealed class OrderService
         return ToDto(order);
     }
 
+    public async Task<RecordFulfillmentResult> RecordFulfillmentAsync(
+        Guid id,
+        RecordFulfillmentCommand command,
+        CancellationToken cancellationToken)
+    {
+        var errors = RecordFulfillmentCommandValidator.Validate(command);
+        if (errors.Count > 0)
+            return new RecordFulfillmentResult.InvalidInput(errors);
+
+        var order = await _orders.FindAsync(id, cancellationToken);
+        if (order is null)
+            return new RecordFulfillmentResult.NotFound();
+
+        if (order.RecordFulfillment(RecordFulfillmentCommandValidator.Parse(command.Fulfillment!)))
+            await _orders.UpdateAsync(order, cancellationToken);
+
+        return new RecordFulfillmentResult.Success(ToDto(order));
+    }
+
     private static OrderDto ToDto(Order order)
-        => new(order.Id, order.CustomerName, order.Amount, order.Status.ToString(), order.CreatedAtUtc);
+        => new(
+            order.Id,
+            order.CustomerName,
+            order.Amount,
+            order.Status.ToString(),
+            order.Fulfillment?.ToString(),
+            order.CreatedAtUtc);
 }

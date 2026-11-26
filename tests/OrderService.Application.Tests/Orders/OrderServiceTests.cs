@@ -211,6 +211,88 @@ public sealed class OrderServiceTests
         Assert.Equal(order.Id.ToString(), message.Payload);
     }
 
+    [Fact]
+    public async Task RecordFulfillmentAsync_records_a_later_status_without_an_order_outbox_message()
+    {
+        var order = await SeedDraft(_ownerId, "Ada");
+        await _service.PayAsync(_ownerId, order.Id, CancellationToken.None);
+        _outbox.Messages.Clear();
+
+        var pending = await _service.RecordFulfillmentAsync(
+            order.Id,
+            new RecordFulfillmentCommand("Pending"),
+            CancellationToken.None);
+        var shipped = await _service.RecordFulfillmentAsync(
+            order.Id,
+            new RecordFulfillmentCommand("Shipped"),
+            CancellationToken.None);
+
+        Assert.Equal("Pending", Assert.IsType<RecordFulfillmentResult.Success>(pending).Order.Fulfillment);
+        var recorded = Assert.IsType<RecordFulfillmentResult.Success>(shipped);
+        Assert.Equal("Paid", recorded.Order.Status);
+        Assert.Equal("Shipped", recorded.Order.Fulfillment);
+        Assert.Equal(FulfillmentStatus.Shipped, order.Fulfillment);
+        Assert.Empty(_outbox.Messages);
+    }
+
+    [Fact]
+    public async Task RecordFulfillmentAsync_keeps_the_later_status_when_an_earlier_notice_arrives()
+    {
+        var order = await SeedDraft(_ownerId, "Ada");
+        order.Pay();
+        order.RecordFulfillment(FulfillmentStatus.Shipped);
+
+        var result = await _service.RecordFulfillmentAsync(
+            order.Id,
+            new RecordFulfillmentCommand("Packed"),
+            CancellationToken.None);
+
+        var recorded = Assert.IsType<RecordFulfillmentResult.Success>(result);
+        Assert.Equal("Shipped", recorded.Order.Fulfillment);
+        Assert.Equal(FulfillmentStatus.Shipped, order.Fulfillment);
+    }
+
+    [Fact]
+    public async Task RecordFulfillmentAsync_rejects_an_unknown_status_without_changing_the_order()
+    {
+        var order = await SeedDraft(_ownerId, "Ada");
+        order.Pay();
+
+        var result = await _service.RecordFulfillmentAsync(
+            order.Id,
+            new RecordFulfillmentCommand("Done"),
+            CancellationToken.None);
+
+        var invalid = Assert.IsType<RecordFulfillmentResult.InvalidInput>(result);
+        Assert.Equal("Fulfillment must be Pending, Packed, or Shipped.", Assert.Single(invalid.Errors["fulfillment"]));
+        Assert.Null(order.Fulfillment);
+        Assert.Equal(OrderStatus.Paid, order.Status);
+    }
+
+    [Fact]
+    public async Task RecordFulfillmentAsync_returns_not_found_for_an_unknown_order()
+    {
+        var result = await _service.RecordFulfillmentAsync(
+            Guid.NewGuid(),
+            new RecordFulfillmentCommand("Pending"),
+            CancellationToken.None);
+
+        Assert.IsType<RecordFulfillmentResult.NotFound>(result);
+    }
+
+    [Fact]
+    public async Task RecordFulfillmentAsync_rejects_a_draft()
+    {
+        var order = await SeedDraft(_ownerId, "Ada");
+
+        var exception = await Assert.ThrowsAsync<DomainException>(() =>
+            _service.RecordFulfillmentAsync(order.Id, new RecordFulfillmentCommand("Pending"), CancellationToken.None));
+
+        Assert.Equal("Only a paid order can record fulfillment.", exception.Message);
+        Assert.Null(order.Fulfillment);
+        Assert.Equal(OrderStatus.Draft, order.Status);
+    }
+
     private async Task<Order> SeedDraft(Guid ownerId, string customerName)
     {
         var order = Order.Create(ownerId, customerName, 120);

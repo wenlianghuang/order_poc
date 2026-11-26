@@ -3,10 +3,12 @@ namespace ShipmentService.Shipments;
 public sealed class ShipmentService
 {
     private readonly IShipmentRepository _shipments;
+    private readonly IShipmentOutbox _outbox;
 
-    public ShipmentService(IShipmentRepository shipments)
+    public ShipmentService(IShipmentRepository shipments, IShipmentOutbox outbox)
     {
         _shipments = shipments;
+        _outbox = outbox;
     }
 
     public async Task<AcceptDeliveryResult> AcceptAsync(AcceptDeliveryCommand command, CancellationToken cancellationToken)
@@ -25,6 +27,7 @@ public sealed class ShipmentService
             return new AcceptDeliveryResult.ShipmentAlreadyExists(ToDto(existing));
 
         var shipment = Shipment.Create(messageId, orderId);
+        _outbox.Add(FulfillmentNoticeTypes.Pending, orderId.ToString());
         try
         {
             await _shipments.AddAsync(shipment, cancellationToken);
@@ -60,6 +63,7 @@ public sealed class ShipmentService
             return new UpdateShipmentResult.NotFound();
 
         advance(shipment);
+        _outbox.Add(FulfillmentNoticeTypes.For(shipment.Status), shipment.OrderId.ToString());
         await _shipments.UpdateAsync(shipment, cancellationToken);
         return new UpdateShipmentResult.Success(ToDto(shipment));
     }

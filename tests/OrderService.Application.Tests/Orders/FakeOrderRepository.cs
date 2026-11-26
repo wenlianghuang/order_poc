@@ -24,6 +24,9 @@ internal sealed class FakeOrderRepository : IOrderRepository
     public Task<Order?> GetByIdAsync(Guid ownerId, Guid id, CancellationToken cancellationToken)
         => Task.FromResult(_orders.SingleOrDefault(order => order.OwnerId == ownerId && order.Id == id));
 
+    public Task<Order?> FindAsync(Guid id, CancellationToken cancellationToken)
+        => Task.FromResult(_orders.SingleOrDefault(order => order.Id == id));
+
     public Task UpdateAsync(Order order, CancellationToken cancellationToken)
         => Task.CompletedTask;
 

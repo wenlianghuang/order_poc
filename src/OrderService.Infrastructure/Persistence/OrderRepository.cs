@@ -25,6 +25,9 @@ public sealed class OrderRepository : IOrderRepository
     public Task<Order?> GetByIdAsync(Guid ownerId, Guid id, CancellationToken cancellationToken)
         => _db.Orders.FirstOrDefaultAsync(order => order.Id == id && order.OwnerId == ownerId, cancellationToken);
 
+    public Task<Order?> FindAsync(Guid id, CancellationToken cancellationToken)
+        => _db.Orders.FirstOrDefaultAsync(order => order.Id == id, cancellationToken);
+
     public async Task UpdateAsync(Order order, CancellationToken cancellationToken)
     {
         _db.Orders.Update(order);

@@ -28,7 +28,9 @@ public sealed class ShipmentRepository : IShipmentRepository
         }
         catch (DbUpdateException exception) when (IsUniqueViolation(exception))
         {
-            _db.Entry(shipment).State = EntityState.Detached;
+            foreach (var entry in _db.ChangeTracker.Entries().Where(entry => entry.State == EntityState.Added).ToList())
+                entry.State = EntityState.Detached;
+
             throw new DuplicateShipmentException();
         }
     }

@@ -4,9 +4,43 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
-  build:
-    name: build
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      order: ${{ steps.filter.outputs.order }}
+      shipment: ${{ steps.filter.outputs.shipment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            order:
+              - 'src/OrderService.*/**'
+              - 'tests/OrderService.*/**'
+              - 'OrderService.slnx'
+              - '.github/workflows/ci.yml'
+            shipment:
+              - 'src/ShipmentService.Api/**'
+              - 'tests/ShipmentService.Tests/**'
+              - 'OrderService.slnx'
+              - '.github/workflows/ci.yml'
+
+  order:
+    name: order
+    needs: changes
+    if: needs.changes.outputs.order == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -17,11 +51,48 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Restore
-        run: dotnet restore OrderService.slnx
-
       - name: Build
-        run: dotnet build OrderService.slnx --no-restore --configuration Release --verbosity minimal
+        run: dotnet build src/OrderService.Api/OrderService.Api.csproj --configuration Release --verbosity minimal
 
       - name: Test
-        run: dotnet test OrderService.slnx --no-build --configuration Release --verbosity minimal
+        run: |
+          dotnet test tests/OrderService.Domain.Tests/OrderService.Domain.Tests.csproj --configuration Release --verbosity minimal
+          dotnet test tests/OrderService.Application.Tests/OrderService.Application.Tests.csproj --configuration Release --verbosity minimal
+          dotnet test tests/OrderService.Infrastructure.Tests/OrderService.Infrastructure.Tests.csproj --configuration Release --verbosity minimal
+
+  shipment:
+    name: shipment
+    needs: changes
+    if: needs.changes.outputs.shipment == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Test
+        run: dotnet test tests/ShipmentService.Tests/ShipmentService.Tests.csproj --configuration Release --verbosity minimal
+
+  ci:
+    name: ci
+    needs: [changes, order, shipment]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful or skipped service jobs
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          ORDER: ${{ needs.order.result }}
+          SHIPMENT: ${{ needs.shipment.result }}
+        run: |
+          echo "changes=$CHANGES order=$ORDER shipment=$SHIPMENT"
+          for result in "$CHANGES" "$ORDER" "$SHIPMENT"; do
+            case "$result" in
+              success|skipped) ;;
+              *) exit 1 ;;
+            esac
+          done

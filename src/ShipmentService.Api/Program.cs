@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using ShipmentService.Endpoints;
+using ShipmentService.Outbox;
 using ShipmentService.Persistence;
 using ShipmentService.Shipments;
 using ShipmentAppService = ShipmentService.Shipments.ShipmentService;
@@ -11,7 +12,10 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 
 builder.Services.AddDbContext<ShipmentDbContext>(options => options.UseNpgsql(connectionString));
 builder.Services.AddScoped<IShipmentRepository, ShipmentRepository>();
+builder.Services.AddScoped<IShipmentOutbox, ShipmentOutboxWriter>();
 builder.Services.AddScoped<ShipmentAppService>();
+builder.Services.AddFulfillmentProcessing(builder.Configuration);
+builder.Services.AddHostedService<FulfillmentOutboxWorker>();
 builder.Services.AddOpenApi();
 
 var app = builder.Build();

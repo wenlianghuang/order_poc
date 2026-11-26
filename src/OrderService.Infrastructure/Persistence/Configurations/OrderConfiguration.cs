@@ -40,6 +40,11 @@ public sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
             .HasDefaultValue(OrderStatus.Draft)
             .IsRequired();
 
+        builder.Property(order => order.Fulfillment)
+            .HasColumnName("fulfillment")
+            .HasConversion<string>()
+            .HasMaxLength(32);
+
         builder.Property(order => order.CreatedAtUtc)
             .HasColumnName("created_at_utc");
     }

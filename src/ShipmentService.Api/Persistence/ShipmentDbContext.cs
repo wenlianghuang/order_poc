@@ -10,6 +10,7 @@ public sealed class ShipmentDbContext : DbContext
     }
 
     public DbSet<Shipment> Shipments => Set<Shipment>();
+    public DbSet<ShipmentOutboxMessage> OutboxMessages => Set<ShipmentOutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

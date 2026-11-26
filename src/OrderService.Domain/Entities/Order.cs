@@ -11,6 +11,7 @@ public sealed class Order
     public string CustomerName { get; private set; } = null!;
     public decimal Amount { get; private set; }
     public OrderStatus Status { get; private set; }
+    public FulfillmentStatus? Fulfillment { get; private set; }
     public DateTime CreatedAtUtc { get; private set; }
 
     private Order()
@@ -80,5 +81,17 @@ public sealed class Order
             throw new DomainException("Only a draft order can be cancelled.");
 
         Status = OrderStatus.Cancelled;
+    }
+
+    public bool RecordFulfillment(FulfillmentStatus fulfillment)
+    {
+        if (Status != OrderStatus.Paid)
+            throw new DomainException("Only a paid order can record fulfillment.");
+
+        if (Fulfillment is FulfillmentStatus current && fulfillment <= current)
+            return false;
+
+        Fulfillment = fulfillment;
+        return true;
     }
 }

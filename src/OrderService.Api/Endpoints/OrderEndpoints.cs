@@ -9,6 +9,22 @@ public static class OrderEndpoints
 {
     public static IEndpointRouteBuilder MapOrderEndpoints(this IEndpointRouteBuilder app)
     {
+        app.MapPost("/orders/{id:guid}/fulfillment", async (
+            Guid id,
+            RecordFulfillmentCommand command,
+            OrderAppService orders,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await orders.RecordFulfillmentAsync(id, command, cancellationToken);
+            return result switch
+            {
+                RecordFulfillmentResult.Success success => Results.Ok(success.Order),
+                RecordFulfillmentResult.InvalidInput invalid => Results.ValidationProblem(invalid.Errors),
+                RecordFulfillmentResult.NotFound => Results.NotFound(),
+                _ => throw new InvalidOperationException("Unexpected fulfillment result.")
+            };
+        });
+
         var group = app.MapGroup("/orders").RequireAuthorization();
 
         group.MapGet("/", async (ClaimsPrincipal user, OrderAppService orders, CancellationToken cancellationToken) =>
