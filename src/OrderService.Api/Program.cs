@@ -53,7 +53,7 @@ app.Use(async (context, next) =>
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/deploy-check", () => Results.Text("deploy-check: green-dot", "text/plain"));
+app.MapGet("/deploy-check", () => Results.Text("deploy-check: green-dot2", "text/plain"));
 app.MapAuthEndpoints();
 app.MapOrderEndpoints();
 
