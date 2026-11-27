@@ -1,0 +1,171 @@
+# Deploys images that are already in GHCR.
+#
+# Repository secrets (Settings → Secrets and variables → Actions):
+#   DEPLOY_HOST         SSH host. Without this, deploy is skipped.
+#   DEPLOY_USER         SSH user
+#   DEPLOY_SSH_KEY      private key
+#   DEPLOY_PORT         optional, default 22
+#   DEPLOY_KNOWN_HOSTS  optional ssh-keyscan line. Without it, the runner accepts the host key on first connect.
+#   DEPLOY_PATH         optional directory on the server. Default is $HOME/order-poc
+#   POSTGRES_PASSWORD
+#   AUTH_SIGNING_KEY    at least 32 bytes. Do not use ';' in the password; it is placed in the Npgsql connection string.
+#
+# The server needs Docker Compose (`docker compose` or `docker-compose`). Postgres stays on the private network.
+# A v* tag deploys that tag after both images publish. Manual run deploys an existing tag.
+
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Tag already in GHCR (sha-abcdef1, latest, or v1.2.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check deploy secrets
+        id: gate
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          if [ -z "$HOST" ] || [ -z "$USER" ] || [ -z "$KEY" ]; then
+            echo "DEPLOY_HOST, DEPLOY_USER, or DEPLOY_SSH_KEY is unset. Skipping deploy."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write env file
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          AUTH_SIGNING_KEY: ${{ secrets.AUTH_SIGNING_KEY }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_OWNER: ${{ github.repository_owner }}
+          ENV_FILE: ${{ runner.temp }}/prod.env
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import sys
+
+          password = os.environ.get("POSTGRES_PASSWORD", "")
+          key = os.environ.get("AUTH_SIGNING_KEY", "")
+          tag = os.environ["IMAGE_TAG"]
+          owner = os.environ["IMAGE_OWNER"].lower()
+          unsafe = set("$#\"'\\ \t\r\n")
+          if not password:
+              sys.exit("POSTGRES_PASSWORD secret is empty")
+          if ";" in password or any(char in unsafe for char in password):
+              sys.exit("POSTGRES_PASSWORD cannot contain ';', '$', quotes, spaces, or newlines")
+          if len(key.encode("utf-8")) < 32:
+              sys.exit("AUTH_SIGNING_KEY must be at least 32 bytes")
+          if any(char in unsafe for char in key):
+              sys.exit("AUTH_SIGNING_KEY cannot contain '$', quotes, spaces, or newlines")
+          if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", tag):
+              sys.exit("image tag is empty or contains unsupported characters")
+
+          lines = [
+              "POSTGRES_USER=postgres",
+              "POSTGRES_PASSWORD=" + password,
+              "ORDER_DB=Host=postgres;Port=5432;Database=orderservice;Username=postgres;Password=" + password,
+              "SHIPMENT_DB=Host=postgres;Port=5432;Database=shipments;Username=postgres;Password=" + password,
+              "AUTH_ISSUER=OrderService",
+              "AUTH_AUDIENCE=OrderService",
+              "AUTH_SIGNING_KEY=" + key,
+              "AUTH_TOKEN_LIFETIME_MINUTES=60",
+              f"ORDER_IMAGE=ghcr.io/{owner}/order-poc-order:{tag}",
+              f"SHIPMENT_IMAGE=ghcr.io/{owner}/order-poc-shipment:{tag}",
+          ]
+          path = os.environ["ENV_FILE"]
+          with open(path, "w", encoding="utf-8") as handle:
+              handle.write("\n".join(lines) + "\n")
+          os.chmod(path, 0o600)
+          PY
+
+      - name: Copy stack and start
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          PORT: ${{ secrets.DEPLOY_PORT }}
+          DEST: ${{ secrets.DEPLOY_PATH }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ENV_FILE: ${{ runner.temp }}/prod.env
+          TOKEN_FILE: ${{ runner.temp }}/ghcr_token
+        run: |
+          set -euo pipefail
+          port="${PORT:-22}"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          umask 077
+          printf '%s' "$GHCR_TOKEN" > "$TOKEN_FILE"
+
+          opts=(
+            -i "$HOME/.ssh/deploy_key"
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+          )
+          if [ -n "${KNOWN_HOSTS}" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+            chmod 600 "$HOME/.ssh/known_hosts"
+            opts+=(-o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+          else
+            opts+=(-o StrictHostKeyChecking=accept-new)
+          fi
+
+          dest_q=$(printf '%q' "$DEST")
+          remote_dir=$(ssh "${opts[@]}" -p "$port" "$USER@$HOST" \
+            "dest=$dest_q; if [ -z \"\$dest\" ]; then dest=\$HOME/order-poc; fi; mkdir -p \"\$dest/docker/postgres/init\"; printf '%s' \"\$dest\"")
+
+          scp "${opts[@]}" -P "$port" \
+            docker-compose.prod.yml \
+            "$USER@$HOST:$remote_dir/docker-compose.prod.yml"
+          scp "${opts[@]}" -P "$port" \
+            deploy/up.sh \
+            "$USER@$HOST:$remote_dir/up.sh"
+          scp "${opts[@]}" -P "$port" \
+            docker/postgres/init/create-shipments.sql \
+            "$USER@$HOST:$remote_dir/docker/postgres/init/create-shipments.sql"
+          scp "${opts[@]}" -P "$port" \
+            "$ENV_FILE" \
+            "$USER@$HOST:$remote_dir/.env"
+          scp "${opts[@]}" -P "$port" \
+            "$TOKEN_FILE" \
+            "$USER@$HOST:$remote_dir/.ghcr_token"
+          rm -f "$TOKEN_FILE" "$ENV_FILE"
+
+          ssh "${opts[@]}" -p "$port" "$USER@$HOST" \
+            "bash -s -- $(printf '%q' "$remote_dir") $(printf '%q' "$GHCR_USERNAME")" <<'EOF'
+          set -eu
+          dest=$1
+          user=$2
+          cd "$dest"
+          chmod 700 ./up.sh
+          chmod 600 .env .ghcr_token
+          GHCR_USERNAME="$user" GHCR_TOKEN_FILE="$dest/.ghcr_token" sh ./up.sh
+          EOF

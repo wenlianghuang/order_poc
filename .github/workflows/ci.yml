@@ -46,7 +46,9 @@ jobs:
   order:
     name: order
     needs: changes
-    if: needs.changes.outputs.order == 'true'
+    if: >-
+      needs.changes.outputs.order == 'true' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -67,12 +69,15 @@ jobs:
           dotnet test tests/OrderService.Infrastructure.Tests/OrderService.Infrastructure.Tests.csproj --configuration Release --verbosity minimal
 
       - name: Build image
+        if: ${{ github.event_name != 'push' || (github.ref != format('refs/heads/{0}', github.event.repository.default_branch) && !startsWith(github.ref, 'refs/tags/v')) }}
         run: docker build -f src/OrderService.Api/Dockerfile .
 
   shipment:
     name: shipment
     needs: changes
-    if: needs.changes.outputs.shipment == 'true'
+    if: >-
+      needs.changes.outputs.shipment == 'true' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -87,11 +92,154 @@ jobs:
         run: dotnet test tests/ShipmentService.Tests/ShipmentService.Tests.csproj --configuration Release --verbosity minimal
 
       - name: Build image
+        if: ${{ github.event_name != 'push' || (github.ref != format('refs/heads/{0}', github.event.repository.default_branch) && !startsWith(github.ref, 'refs/tags/v')) }}
         run: docker build -f src/ShipmentService.Api/Dockerfile .
+
+  publish-order:
+    name: publish order
+    needs: [changes, order]
+    if: >-
+      needs.order.result == 'success' &&
+      github.event_name == 'push' &&
+      (
+        (
+          needs.changes.outputs.order == 'true' &&
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        ) ||
+        startsWith(github.ref, 'refs/tags/v')
+      )
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ghcr-order-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/order-poc-order
+          flavor: |
+            latest=auto
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=ref,event=tag
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/OrderService.Api/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=order
+          cache-to: type=gha,scope=order,mode=max
+
+      - name: Show published tags
+        run: echo "${{ steps.meta.outputs.tags }}"
+
+  publish-shipment:
+    name: publish shipment
+    needs: [changes, shipment]
+    if: >-
+      needs.shipment.result == 'success' &&
+      github.event_name == 'push' &&
+      (
+        (
+          needs.changes.outputs.shipment == 'true' &&
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        ) ||
+        startsWith(github.ref, 'refs/tags/v')
+      )
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ghcr-shipment-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/order-poc-shipment
+          flavor: |
+            latest=auto
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=ref,event=tag
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/ShipmentService.Api/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=shipment
+          cache-to: type=gha,scope=shipment,mode=max
+
+      - name: Show published tags
+        run: echo "${{ steps.meta.outputs.tags }}"
+
+  deploy:
+    name: deploy
+    needs: [publish-order, publish-shipment]
+    if: >-
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      needs.publish-order.result == 'success' &&
+      needs.publish-shipment.result == 'success'
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/deploy.yml
+    with:
+      image_tag: ${{ github.ref_name }}
+    secrets: inherit
 
   ci:
     name: ci
-    needs: [changes, order, shipment]
+    needs: [changes, order, shipment, publish-order, publish-shipment, deploy]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -100,9 +248,12 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           ORDER: ${{ needs.order.result }}
           SHIPMENT: ${{ needs.shipment.result }}
+          PUBLISH_ORDER: ${{ needs.publish-order.result }}
+          PUBLISH_SHIPMENT: ${{ needs.publish-shipment.result }}
+          DEPLOY: ${{ needs.deploy.result }}
         run: |
-          echo "changes=$CHANGES order=$ORDER shipment=$SHIPMENT"
-          for result in "$CHANGES" "$ORDER" "$SHIPMENT"; do
+          echo "changes=$CHANGES order=$ORDER shipment=$SHIPMENT publish_order=$PUBLISH_ORDER publish_shipment=$PUBLISH_SHIPMENT deploy=$DEPLOY"
+          for result in "$CHANGES" "$ORDER" "$SHIPMENT" "$PUBLISH_ORDER" "$PUBLISH_SHIPMENT" "$DEPLOY"; do
             case "$result" in
               success|skipped) ;;
               *) exit 1 ;;
