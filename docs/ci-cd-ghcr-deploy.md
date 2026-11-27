@@ -49,7 +49,7 @@ ghcr.io/wenlianghuang/order-poc-shipment
 
 執行目錄是 `~/order-poc`，不是外接碟上的程式目錄。裡面有 `docker-compose.prod.yml`、`up.sh`、Postgres 的 init SQL，以及 `.env`。`.env` 的密碼只放這台，不要提交。每次部署只改寫裡面的 `ORDER_IMAGE` 和 `SHIPMENT_IMAGE`。
 
-Colima 沒在跑時，`deploy/local-up.sh` 會先執行 `colima start`，再用 `docker-compose` 拉映像、`up -d`。訂單服務是 `http://localhost:5064`，出貨服務是 `http://localhost:5065`。環境是 `Production`，沒有 Swagger。
+Colima 沒在跑時，`deploy/local-up.sh` 會先執行 `colima start`，再用 `docker-compose` 拉映像、`up -d`。訂單服務是 `http://localhost:5064`，出貨服務是 `http://localhost:5065`。這台的 `~/order-poc/.env` 把 `ASPNETCORE_ENVIRONMENT` 設成 `Development`，所以 Swagger 在 `/swagger`。SSH 部署到別台機器時沒有這個變數，環境是 `Production`，那裡沒有 Swagger。
 
 看這台是否已更新：
 
