@@ -1,23 +1,24 @@
 # CI/CD and GHCR Deploy
 
-這份說明對著現在這兩個 workflow：`.github/workflows/ci.yml` 負責建置、測試、把映像推上 GitHub Container Registry（GHCR）；`.github/workflows/deploy.yml` 負責登入一台已經裝好 Docker 的機器，把那兩個映像拉下來並啟動。
+這份說明對著現在的 workflow。`.github/workflows/ci.yml` 負責建置、測試、把映像推上 GitHub Container Registry（GHCR）。推上 `main` 之後，`.github/workflows/deploy-local.yml` 在這台 Mac 上把映像拉下來並啟動。`.github/workflows/deploy.yml` 仍是另一條路：用 SSH 更新一台別的機器，只有推 `v*` 標籤時才會走。
 
-GHCR 是映像的倉庫。伺服器只拉已經推上去的映像來跑。正式環境要跑起來，映像必須先在 GHCR，部署用的 SSH 與密碼也必須先寫進 GitHub。映像的可見性跟著倉庫走；部署當下 Actions 用自己的 token 在伺服器上登入 GHCR，私有映像一樣拉得到。
+GHCR 是映像的倉庫。這台機器只拉已經推上去的映像來跑，不在部署當下編譯。映像的可見性跟著倉庫走；部署當下 Actions 用自己的 token 登入 GHCR，私有映像一樣拉得到。
 
 ## What runs when
 
-`ci.yml` 在每次 `push` 和 `pull_request` 都會啟動。它先看這次改了哪些路徑，再決定要跑訂單服務、出貨服務，或兩個都跑。
+`ci.yml` 在每次 `push` 和 `pull_request` 都會啟動。Pull request 和不是 `main` 的分支只測有改到的服務。推上 `main` 時，兩個服務都會測、都會推上 GHCR，這樣兩個容器用的是同一個 `sha-` 標籤。
 
-| 你做的事 | 測試 | 推上 GHCR | 部署到伺服器 |
-| --- | --- | --- | --- |
-| 開 pull request，或推到不是預設分支的分支 | 有改到的那個服務會測 | 不推 | 不部署 |
-| 推到預設分支（通常是 `main`） | 有改到的那個服務會測 | 有改到的那個服務會推 | 不部署 |
-| 推一個 `v` 開頭的標籤，例如 `v1.2.0` | 兩個服務都測 | 兩個服務都推，標籤就是這個版本 | 兩個都推成功之後，用這個標籤部署 |
-| 在 Actions 手動跑 Deploy | 不再測 | 不再推 | 拉你填的那個既有標籤 |
+| 你做的事 | 測試 | 推上 GHCR | 這台 Mac | 別的伺服器 |
+| --- | --- | --- | --- | --- |
+| 開 pull request，或推到不是 `main` 的分支 | 有改到的那個服務會測 | 不推 | 不更新 | 不更新 |
+| 推上 `main` | 兩個服務都測 | 兩個服務都推，標籤是 `sha-` 加七碼 | 這台醒著、runner 有連上時，拉這個 `sha-` 並重啟 | 不更新 |
+| 推一個 `v` 開頭的標籤，例如 `v1.2.0` | 兩個服務都測 | 兩個服務都推 | 不經由這條本機流程 | 兩個都推成功、而且 SSH secret 都有填時，用這個標籤部署 |
+| Actions 手動跑 **Deploy local** | 不再測 | 不再推 | 拉你填的那個既有標籤 | 不更新 |
+| Actions 手動跑 **Deploy** | 不再測 | 不再推 | 不更新 | 拉你填的那個既有標籤 |
 
-預設分支上的推送只更新映像。正式機器要換版本，用 `v*` 標籤，或是手動跑 Deploy 去拉一個已經存在的標籤。
+這台睡眠或關機時，**Deploy local** 會在 GitHub 排隊，最久大約 24 小時。打開並登入這台之後，runner 重新連上，就會跑最新排隊的那一次。中間比較舊的排隊會被拿掉。CI 本身不會等這台，測試和推映像仍會先做完。
 
-`v*` 標籤會強制兩個服務都建、都推，就算這次 diff 只碰到其中一個。這樣伺服器上的兩張映像是同一版。
+`v*` 標籤的 SSH 部署不會因為這台關著而改在這台進行。那條要另外一台 GitHub 連得到的機器，secret 沒填就會跳過。
 
 ## Images and tags
 
@@ -38,15 +39,40 @@ ghcr.io/wenlianghuang/order-poc-shipment
 - `1.2.0`
 - `v1.2.0`
 
-自動部署用的是標籤全名 `v1.2.0`，兩個服務都是這個名字。
+這台 Mac 上的自動部署用的是 `sha-` 加七碼，兩個服務都是這個名字。SSH 那條自動部署用的是標籤全名 `v1.2.0`。
 
 映像是 `linux/amd64` 和 `linux/arm64` 各一份。x86 的雲端主機和 ARM 的機器都可以拉同一組標籤。
 
+## This Mac
+
+本機部署跑在標籤 `self-hosted`、`macOS`、`ARM64` 的 runner 上。runner 裝在這台的 `~/actions-runner`，用登入後才會起來的 LaunchAgent。關機、睡眠、或還沒登入時，它不會連上 GitHub。
+
+執行目錄是 `~/order-poc`，不是外接碟上的程式目錄。裡面有 `docker-compose.prod.yml`、`up.sh`、Postgres 的 init SQL，以及 `.env`。`.env` 的密碼只放這台，不要提交。每次部署只改寫裡面的 `ORDER_IMAGE` 和 `SHIPMENT_IMAGE`。
+
+Colima 沒在跑時，`deploy/local-up.sh` 會先執行 `colima start`，再用 `docker-compose` 拉映像、`up -d`。訂單服務是 `http://localhost:5064`，出貨服務是 `http://localhost:5065`。環境是 `Production`，沒有 Swagger。
+
+看這台是否已更新：
+
+```bash
+cd ~/order-poc
+DOCKER_HOST="unix://$HOME/.colima/default/docker.sock" \
+  docker-compose --env-file .env -f docker-compose.prod.yml ps
+```
+
+```bash
+curl -sS -D - -o /tmp/register.json \
+  -X POST "http://127.0.0.1:5064/register" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"staff","password":"practice"}'
+```
+
+第一次是 `201`。同一個名稱再打一次是 `409`。
+
 ## What you type into GitHub
 
-打開倉庫的 **Settings → Secrets and variables → Actions → Repository secrets**。名稱要完全一致，值貼進對應的 secret。`GITHUB_TOKEN` 不用自己建，Actions 會發。
+這台 Mac 的部署不用下面這些 secret。密碼和簽章鑰匙放在 `~/order-poc/.env`。`GITHUB_TOKEN` 也不用自己建，Actions 會發。
 
-一定要有，少一個的話這次部署會被跳過，workflow 仍算成功，伺服器不會動：
+下面這張表只給 SSH 那條、要更新另一台機器時用。打開倉庫的 **Settings → Secrets and variables → Actions → Repository secrets**。名稱要完全一致，值貼進對應的 secret。少一個 SSH 值的話，那次遠端部署會被跳過，workflow 仍算成功，遠端機器不會動：
 
 | Secret | 貼進去的內容 |
 | --- | --- |
