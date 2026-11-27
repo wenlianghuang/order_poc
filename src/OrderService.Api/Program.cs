@@ -50,7 +50,6 @@ app.Use(async (context, next) =>
         }).ExecuteAsync(context);
     }
 });
-// TODO: Add exception handling for other exceptions
 app.UseAuthentication();
 app.UseAuthorization();
 
