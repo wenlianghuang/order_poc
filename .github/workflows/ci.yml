@@ -29,11 +29,17 @@ jobs:
             order:
               - 'src/OrderService.*/**'
               - 'tests/OrderService.*/**'
+              - 'docker-compose.yml'
+              - '.dockerignore'
+              - 'docker/**'
               - 'OrderService.slnx'
               - '.github/workflows/ci.yml'
             shipment:
               - 'src/ShipmentService.Api/**'
               - 'tests/ShipmentService.Tests/**'
+              - 'docker-compose.yml'
+              - '.dockerignore'
+              - 'docker/**'
               - 'OrderService.slnx'
               - '.github/workflows/ci.yml'
 
@@ -60,6 +66,9 @@ jobs:
           dotnet test tests/OrderService.Application.Tests/OrderService.Application.Tests.csproj --configuration Release --verbosity minimal
           dotnet test tests/OrderService.Infrastructure.Tests/OrderService.Infrastructure.Tests.csproj --configuration Release --verbosity minimal
 
+      - name: Build image
+        run: docker build -f src/OrderService.Api/Dockerfile .
+
   shipment:
     name: shipment
     needs: changes
@@ -76,6 +85,9 @@ jobs:
 
       - name: Test
         run: dotnet test tests/ShipmentService.Tests/ShipmentService.Tests.csproj --configuration Release --verbosity minimal
+
+      - name: Build image
+        run: docker build -f src/ShipmentService.Api/Dockerfile .
 
   ci:
     name: ci
