@@ -111,7 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     concurrency:
       group: ghcr-order-${{ github.ref }}
-      cancel-in-progress: false
+      cancel-in-progress: true
     permissions:
       contents: read
       packages: write
@@ -127,7 +127,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/order-poc-order
           flavor: |
-            latest=auto
+            latest=false
           tags: |
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
@@ -161,6 +161,26 @@ jobs:
       - name: Show published tags
         run: echo "${{ steps.meta.outputs.tags }}"
 
+      - name: Move latest tag
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tip=$(curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME}" \
+            | jq -r .sha)
+          if [ "$tip" != "$GITHUB_SHA" ]; then
+            echo "Branch tip is $tip. This build is $GITHUB_SHA, so latest stays put."
+            exit 0
+          fi
+          owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          short=$(git rev-parse --short=7 HEAD)
+          docker buildx imagetools create \
+            -t "ghcr.io/${owner}/order-poc-order:latest" \
+            "ghcr.io/${owner}/order-poc-order:sha-${short}"
+
   publish-shipment:
     name: publish shipment
     needs: [changes, shipment]
@@ -177,7 +197,7 @@ jobs:
     runs-on: ubuntu-latest
     concurrency:
       group: ghcr-shipment-${{ github.ref }}
-      cancel-in-progress: false
+      cancel-in-progress: true
     permissions:
       contents: read
       packages: write
@@ -193,7 +213,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/order-poc-shipment
           flavor: |
-            latest=auto
+            latest=false
           tags: |
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
@@ -226,6 +246,26 @@ jobs:
 
       - name: Show published tags
         run: echo "${{ steps.meta.outputs.tags }}"
+
+      - name: Move latest tag
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tip=$(curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME}" \
+            | jq -r .sha)
+          if [ "$tip" != "$GITHUB_SHA" ]; then
+            echo "Branch tip is $tip. This build is $GITHUB_SHA, so latest stays put."
+            exit 0
+          fi
+          owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          short=$(git rev-parse --short=7 HEAD)
+          docker buildx imagetools create \
+            -t "ghcr.io/${owner}/order-poc-shipment:latest" \
+            "ghcr.io/${owner}/order-poc-shipment:sha-${short}"
 
   deploy:
     name: deploy
